@@ -1,26 +1,9 @@
-<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <title>AR Video Placement</title>
-  <style>
-    body { margin:0; overflow:hidden; }
-  </style>
-</head>
-<body>
-
 <script type="module">
 import {WebXRButton} from './js/util/webxr-button.js';
 import {Scene} from './js/render/scenes/scene.js';
 import {Renderer, createWebGLContext} from './js/render/core/renderer.js';
 import {Node} from './js/render/core/node.js';
 import {Gltf2Node} from './js/render/nodes/gltf2.js';
-import {MeshNode} from './js/render/nodes/mesh.js';
-import {Primitive} from './js/render/core/primitive.js';
-import {Material} from './js/render/core/material.js';
 
 let xrButton;
 let xrRefSpace;
@@ -92,7 +75,6 @@ function onSessionStarted(session) {
     baseLayer: new XRWebGLLayer(session, gl)
   });
 
-  // Reticle model (using existing reticle gltf)
   reticle = new Gltf2Node({ url: 'media/gltf/reticle/reticle.gltf' });
   reticle.visible = false;
   scene.addNode(reticle);
@@ -114,36 +96,31 @@ function onEndSession(session) {
   session.end();
 }
 
-function createVideoQuad(matrix) {
+function createVideoObject(matrix) {
 
-  placedObject = new Node();
+  // Use a flat GLTF plane instead of mesh.js
+  placedObject = new Gltf2Node({
+    url: 'media/gltf/quad/quad.gltf'  // 🔥 You must create this simple quad model
+  });
+
   placedObject.matrix = matrix;
 
   video = document.createElement("video");
-  video.src = "media/video.mp4";   // 🔥 CHANGE THIS TO YOUR VIDEO
+  video.src = "media/video.mp4";
   video.loop = true;
   video.muted = true;
   video.playsInline = true;
   video.crossOrigin = "anonymous";
   video.play();
 
-  const texture = renderer.createTexture(video);
-  videoTexture = texture;
+  videoTexture = renderer.createTexture(video);
 
-  const material = new Material();
-  material.baseColorTexture = texture;
-  material.metallicFactor = 0;
-  material.roughnessFactor = 1;
-
-  const primitive = Primitive.createPlane();
-
-  const mesh = new MeshNode({
-    primitive,
-    material
-  });
-
-  mesh.scale = [1.6, 0.9, 1];  // video aspect ratio
-  placedObject.addNode(mesh);
+  // Wait until model loads, then replace texture
+  placedObject.onLoaded = () => {
+    placedObject.primitives.forEach(p => {
+      p.material.baseColorTexture = videoTexture;
+    });
+  };
 
   scene.addNode(placedObject);
 
@@ -169,11 +146,12 @@ function resetPlacement() {
 
 function onSelect() {
   if (reticle.visible && !objectPlaced) {
-    createVideoQuad(reticle.matrix);
+    createVideoObject(reticle.matrix);
   }
 }
 
 function onXRFrame(t, frame) {
+
   const session = frame.session;
   const pose = frame.getViewerPose(xrRefSpace);
 
@@ -188,7 +166,6 @@ function onXRFrame(t, frame) {
     }
   }
 
-  // Update video texture
   if (video && video.readyState >= 2 && videoTexture) {
     videoTexture.setSource(video);
   }
@@ -199,6 +176,3 @@ function onXRFrame(t, frame) {
   scene.endFrame();
 }
 </script>
-
-</body>
-</html>
