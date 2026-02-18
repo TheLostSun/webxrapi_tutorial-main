@@ -1,30 +1,43 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <title>AR Video Placement</title>
+  <style>
+    body { margin:0; overflow:hidden; }
+  </style>
+</head>
+<body>
+
 <script type="module">
 import {WebXRButton} from './js/util/webxr-button.js';
 import {Scene} from './js/render/scenes/scene.js';
 import {Renderer, createWebGLContext} from './js/render/core/renderer.js';
 import {Node} from './js/render/core/node.js';
-import {vec3} from './js/render/math/gl-matrix.js';
+import {Gltf2Node} from './js/render/nodes/gltf2.js';
+import {MeshNode} from './js/render/nodes/mesh.js';
+import {Primitive} from './js/render/core/primitive.js';
+import {Material} from './js/render/core/material.js';
 
-let xrButton = null;
-let xrRefSpace = null;
-let xrViewerSpace = null;
-let xrHitTestSource = null;
+let xrButton;
+let xrRefSpace;
+let xrViewerSpace;
+let xrHitTestSource;
 
-let gl = null;
-let renderer = null;
+let gl;
+let renderer;
 let scene = new Scene();
-scene.enableStats(false);
 scene.clear = false;
 
-let reticle = new Node();
-reticle.visible = false;
-scene.addNode(reticle);
-
+let reticle;
 let placedObject = null;
 let objectPlaced = false;
 
-let video = null;
-let videoTexture = null;
+let video;
+let videoTexture;
 
 const resetButton = document.createElement("button");
 resetButton.innerText = "RESET";
@@ -36,90 +49,102 @@ resetButton.style.padding = "12px 20px";
 resetButton.style.fontSize = "16px";
 resetButton.style.display = "none";
 document.body.appendChild(resetButton);
+resetButton.onclick = resetPlacement;
 
-resetButton.addEventListener("click", resetPlacement);
+initXR();
 
 function initXR() {
   xrButton = new WebXRButton({
-    onRequestSession: onRequestSession,
-    onEndSession: onEndSession,
+    onRequestSession,
+    onEndSession,
     textEnterXRTitle: "START AR",
     textXRNotFoundTitle: "AR NOT FOUND",
-    textExitXRTitle: "EXIT AR",
+    textExitXRTitle: "EXIT AR"
   });
 
-  document.querySelector('header').appendChild(xrButton.domElement);
+  document.body.appendChild(xrButton.domElement);
 
   if (navigator.xr) {
     navigator.xr.isSessionSupported('immersive-ar')
-      .then((supported) => xrButton.enabled = supported);
+      .then(supported => xrButton.enabled = supported);
   }
 }
 
 function onRequestSession() {
   return navigator.xr.requestSession('immersive-ar', {
     requiredFeatures: ['local', 'hit-test']
-  }).then((session) => {
+  }).then(session => {
     xrButton.setSession(session);
     onSessionStarted(session);
   });
 }
 
 function onSessionStarted(session) {
-  session.addEventListener('end', onSessionEnded);
+
+  session.addEventListener('end', () => xrButton.setSession(null));
   session.addEventListener('select', onSelect);
 
-  if (!gl) {
-    gl = createWebGLContext({ xrCompatible: true });
-    renderer = new Renderer(gl);
-    scene.setRenderer(renderer);
-  }
+  gl = createWebGLContext({ xrCompatible: true });
+  renderer = new Renderer(gl);
+  scene.setRenderer(renderer);
 
-  session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
-
-  session.requestReferenceSpace('viewer').then((refSpace) => {
-    xrViewerSpace = refSpace;
-    session.requestHitTestSource({ space: xrViewerSpace }).then((source) => {
-      xrHitTestSource = source;
-    });
+  session.updateRenderState({
+    baseLayer: new XRWebGLLayer(session, gl)
   });
 
-  session.requestReferenceSpace('local').then((refSpace) => {
-    xrRefSpace = refSpace;
+  // Reticle model (using existing reticle gltf)
+  reticle = new Gltf2Node({ url: 'media/gltf/reticle/reticle.gltf' });
+  reticle.visible = false;
+  scene.addNode(reticle);
+
+  session.requestReferenceSpace('viewer').then(space => {
+    xrViewerSpace = space;
+    session.requestHitTestSource({ space: xrViewerSpace })
+      .then(source => xrHitTestSource = source);
+  });
+
+  session.requestReferenceSpace('local').then(space => {
+    xrRefSpace = space;
     session.requestAnimationFrame(onXRFrame);
   });
 }
 
 function onEndSession(session) {
-  if (xrHitTestSource) {
-    xrHitTestSource.cancel();
-    xrHitTestSource = null;
-  }
+  if (xrHitTestSource) xrHitTestSource.cancel();
   session.end();
 }
 
-function onSessionEnded() {
-  xrButton.setSession(null);
-}
-
 function createVideoQuad(matrix) {
+
   placedObject = new Node();
   placedObject.matrix = matrix;
 
-  const geometry = renderer.createPlanePrimitive(1, 0.6);
-
   video = document.createElement("video");
-  video.src = "media/video.mp4"; // <-- replace with your video
+  video.src = "media/video.mp4";   // 🔥 CHANGE THIS TO YOUR VIDEO
   video.loop = true;
   video.muted = true;
   video.playsInline = true;
+  video.crossOrigin = "anonymous";
   video.play();
 
-  videoTexture = renderer.createTexture(video);
+  const texture = renderer.createTexture(video);
+  videoTexture = texture;
 
-  geometry.material.baseColorTexture = videoTexture;
+  const material = new Material();
+  material.baseColorTexture = texture;
+  material.metallicFactor = 0;
+  material.roughnessFactor = 1;
 
-  placedObject.addNode(geometry);
+  const primitive = Primitive.createPlane();
+
+  const mesh = new MeshNode({
+    primitive,
+    material
+  });
+
+  mesh.scale = [1.6, 0.9, 1];  // video aspect ratio
+  placedObject.addNode(mesh);
+
   scene.addNode(placedObject);
 
   objectPlaced = true;
@@ -149,20 +174,23 @@ function onSelect() {
 }
 
 function onXRFrame(t, frame) {
-  let session = frame.session;
-  let pose = frame.getViewerPose(xrRefSpace);
+  const session = frame.session;
+  const pose = frame.getViewerPose(xrRefSpace);
 
-  if (!objectPlaced) {
-    reticle.visible = false;
-
-    if (xrHitTestSource && pose) {
-      let results = frame.getHitTestResults(xrHitTestSource);
-      if (results.length > 0) {
-        let hitPose = results[0].getPose(xrRefSpace);
-        reticle.visible = true;
-        reticle.matrix = hitPose.transform.matrix;
-      }
+  if (!objectPlaced && xrHitTestSource && pose) {
+    const hits = frame.getHitTestResults(xrHitTestSource);
+    if (hits.length > 0) {
+      const hitPose = hits[0].getPose(xrRefSpace);
+      reticle.visible = true;
+      reticle.matrix = hitPose.transform.matrix;
+    } else {
+      reticle.visible = false;
     }
+  }
+
+  // Update video texture
+  if (video && video.readyState >= 2 && videoTexture) {
+    videoTexture.setSource(video);
   }
 
   scene.startFrame();
@@ -170,6 +198,7 @@ function onXRFrame(t, frame) {
   scene.drawXRFrame(frame, pose);
   scene.endFrame();
 }
-
-initXR();
 </script>
+
+</body>
+</html>
